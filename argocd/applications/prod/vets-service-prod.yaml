@@ -1,0 +1,29 @@
+# IMPORTANT: repoURL below is a placeholder.
+# Run ./scripts/generate-config.sh prod before applying this file.
+# The script will replace the placeholder with your actual GitHub repo URL.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vets-service-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: INFRA_REPO_URL_PLACEHOLDER
+    targetRevision: main
+    path: helm/petclinic-service
+    helm:
+      releaseName: vets-service
+      valueFiles:
+        - ../../helm-values/vets-service.yaml
+        - ../../helm-values/prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: petclinic-prod
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false
+      - PruneLast=true
