@@ -1,0 +1,94 @@
+# NOTE: Host values and certificate ARN are updated automatically by:
+#   ./scripts/generate-config.sh dev
+# Do NOT manually edit host values or certificate-arn — they are injected from
+# terraform outputs and terraform.tfvars after every terraform apply.
+#
+# grafana-dev.praty.dev  → e.g. grafana-dev.your-domain.com
+# argocd-dev.praty.dev   → e.g. argocd-dev.your-domain.com
+# arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7      → your ACM certificate ARN from terraform output
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/group.name: petclinic-monitoring
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: grafana-dev.praty.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/group.name: petclinic-monitoring
+    # ArgoCD runs with --insecure flag (HTTP backend, TLS terminated at ALB)
+    # Do NOT use backend-protocol: HTTPS here — that would conflict with --insecure mode
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: argocd-dev.praty.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zipkin-ingress
+  namespace: tracing
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/group.name: petclinic-monitoring
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-port: "9411"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: zipkin-dev.praty.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: zipkin
+                port:
+                  number: 9411
