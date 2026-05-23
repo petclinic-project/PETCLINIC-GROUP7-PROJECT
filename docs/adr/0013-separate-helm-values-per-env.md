@@ -26,6 +26,7 @@ several problems as the project matured.
 
 Separate helm-values into per-environment subdirectories:
 
+```
 helm-values/
 ├── dev/
 │   └── {service}.yaml    # dev-specific: ECR dev URL, dev tag, dev RDS
@@ -33,7 +34,7 @@ helm-values/
 │   └── {service}.yaml    # prod-specific: ECR prod URL, prod tag, prod RDS
 ├── dev.yaml              # dev-wide overrides (replicaCount=1)
 └── prod.yaml             # prod-wide overrides (replicaCount=2, HikariCP=5)
-
+```
 ---
 
 ## Why This Change Was Made
