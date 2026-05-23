@@ -342,6 +342,20 @@ echo "  Waiting 60s for ArgoCD to begin syncing..."
 sleep 60
 kubectl get applications -n argocd 2>/dev/null || true
 
+# Force sync external-secrets app — it always starts OutOfSync on fresh deploy
+# because ExternalSecrets and Ingress resources are created by setup-cluster.sh
+# before ArgoCD has a chance to reconcile them. Without this, the operator
+# must manually sync it every time after a fresh cluster deploy.
+echo "  Force syncing external-secrets-${ENV}..."
+kubectl patch application "external-secrets-${ENV}" -n argocd \
+  --type merge \
+  -p '{"operation":{"sync":{"syncStrategy":{"apply":{"force":true}}}}}' \
+  2>/dev/null || true
+sleep 15
+ESYNC=$(kubectl get application "external-secrets-${ENV}" -n argocd \
+  -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "unknown")
+echo "  ✅ external-secrets-${ENV} sync status: ${ESYNC}"
+
 # ── Schema init order fix ─────────────────────────────────────────────────────
 # visits table has FK on pets table created by customers-service.
 # If visits-service starts first it crashes with FK constraint error.
