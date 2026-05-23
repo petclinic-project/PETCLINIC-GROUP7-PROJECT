@@ -369,14 +369,14 @@ petclinic-infra/
 ├── config/                    # Generated backend HCL (gitignored)
 │
 └── docs/
-├── architecture.md
-├── runbook.md
-├── incident-playbook.md
-├── onboarding.md
-├── compliance-checklist.md
-├── setup/
-│   └── dns-provider-guide.md
-└── adr/                   # 14 Architecture Decision Records
+    ├── architecture.md
+    ├── runbook.md
+    ├── incident-playbook.md
+    ├── onboarding.md
+    ├── compliance-checklist.md
+    ├── setup/
+    │      └── dns-provider-guide.md
+    └── adr/                   # 14 Architecture Decision Records
 
 ```
 ---
