@@ -37,7 +37,7 @@ cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
 cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
 
 # ── OpenAI — optional ─────────────────────────────────────────────────────────
-openai_api_key = ""
+openai_api_key = ""   # Optional: set your OpenAI API key to enable AI chatbot (sk-proj-...)
 
 # ── Post-apply DNS — filled automatically ─────────────────────────────────────
 # Run: ./scripts/update-dns-and-ingress.sh prod
