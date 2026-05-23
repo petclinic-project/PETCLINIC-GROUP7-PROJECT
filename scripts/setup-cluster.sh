@@ -146,14 +146,22 @@ helm_install_with_retry() {
 }
 
 # ── Helper: inject alertmanager credentials ───────────────────────────────────
-# Uses Python to replace placeholders — preserves spaces in Gmail app passwords.
-# Shell sed/variable substitution strips spaces, breaking authentication.
-# Gmail app passwords are formatted as "xxxx xxxx xxxx xxxx" (spaces required).
+# Reads from monitoring/alertmanager-config.yaml (pure config template —
+# NOT a K8s manifest). Replaces ALERTMANAGER_EMAIL_PLACEHOLDER and
+# ALERTMANAGER_PASSWORD_PLACEHOLDER with values from Secrets Manager.
+#
+# Uses Python to preserve spaces in Gmail app passwords.
+# Shell sed/variable substitution strips spaces — "kyxc auvf mqvy dmvs"
+# becomes "kyxcauvfmqvydmvs" which is invalid for SMTP authentication.
+#
+# Args:
+#   $1 — Secrets Manager secret ID
+#   $2 — AWS region
+#   $3 — output file path for rendered config
 inject_alertmanager_credentials() {
   local SECRET_ID="$1"
   local REGION="$2"
-  local YAML_FILE="$3"
-  local OUTPUT_FILE="$4"
+  local OUTPUT_FILE="$3"
 
   python3 - << PYEOF
 import json, subprocess, sys
@@ -173,28 +181,27 @@ except Exception as e:
     print(f"  ⚠️  Could not read secret: {e}", file=sys.stderr)
     sys.exit(1)
 
-with open("${YAML_FILE}") as f:
+# Read the pure alertmanager config template — not a K8s manifest.
+# monitoring/alertmanager-config.yaml contains only the alertmanager.yml
+# content with placeholders. monitoring/alertmanager.yaml contains the
+# K8s PVC + Deployment + Service — no credential placeholders.
+config_template = "${REPO_ROOT}/monitoring/alertmanager-config.yaml"
+with open(config_template) as f:
     content = f.read()
 
 content = content.replace("ALERTMANAGER_EMAIL_PLACEHOLDER", email)
 content = content.replace("ALERTMANAGER_PASSWORD_PLACEHOLDER", password)
 
-# Extract just the alertmanager.yml section from the K8s Secret manifest
-lines = content.split("\n")
-config_lines = []
-found = False
-for line in lines:
-    if "alertmanager.yml: |" in line:
-        found = True
-        continue
-    if found and line.startswith("---"):
-        break
-    if found:
-        # Strip 4-space indentation from the K8s Secret data block
-        config_lines.append(line[4:] if len(line) >= 4 else line)
+# Verify the config has required sections before writing
+if "route:" not in content:
+    print("  ❌ Config template missing 'route:' section", file=sys.stderr)
+    sys.exit(1)
+if "receivers:" not in content:
+    print("  ❌ Config template missing 'receivers:' section", file=sys.stderr)
+    sys.exit(1)
 
 with open("${OUTPUT_FILE}", "w") as f:
-    f.write("\n".join(config_lines))
+    f.write(content)
 
 print(f"  ✅ Alertmanager config written: email={email}, password length={len(password)}")
 PYEOF
@@ -469,9 +476,12 @@ helm_install_with_retry helm upgrade --install grafana grafana/grafana \
   --wait --timeout 10m
 
 # ── Alertmanager — inject credentials from Secrets Manager ───────────────────
-# IMPORTANT: Uses Python helper to preserve spaces in Gmail app passwords.
-# Shell variable substitution strips spaces — "kyxc auvf mqvy dmvs" becomes
-# "kyxcauvfmqvydmvs" which is invalid. Python string replace preserves them.
+# Reads from monitoring/alertmanager-config.yaml (pure alertmanager config
+# template with placeholders). Replaces placeholders with values from Secrets
+# Manager and creates the alertmanager-config K8s Secret.
+#
+# NOTE: monitoring/alertmanager.yaml contains ONLY PVC + Deployment + Service.
+# The Secret is managed here — never committed to Git with real credentials.
 echo "  Configuring Alertmanager..."
 AM_SECRET_ID="petclinic/${ENV}/alertmanager-email"
 AM_CONFIG_FILE="/tmp/alertmanager-${ENV}.yml"
@@ -483,7 +493,6 @@ if aws secretsmanager describe-secret \
   if inject_alertmanager_credentials \
     "${AM_SECRET_ID}" \
     "${AWS_REGION}" \
-    "${REPO_ROOT}/monitoring/alertmanager.yaml" \
     "${AM_CONFIG_FILE}"; then
 
     kubectl delete secret alertmanager-config \
