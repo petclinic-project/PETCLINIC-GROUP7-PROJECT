@@ -10,11 +10,12 @@
 After implementing Helm (ADR-0007), all per-service values files were initially
 in a flat `helm-values/` directory:
 
+```
 helm-values/
 ├── vets-service.yaml      # one file, used by both dev and prod
 ├── customers-service.yaml
 └── ...
-
+```
 Environment differences (image tags, ECR URLs, RDS endpoints) were managed
 via ArgoCD application-level value file layering. However, this created
 several problems as the project matured.
