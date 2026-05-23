@@ -29,18 +29,20 @@ records and ALB CNAME records are in Cloudflare.
 
 ## How It Works
 
+```
 ACM requests wildcard cert for *.praty.dev
-↓
+  ↓
 ACM provides validation CNAME record
-↓
+  ↓
 Terraform creates CNAME in Cloudflare
-↓
+  ↓
 ACM validates → cert issued
-↓
+  ↓
 Terraform creates CNAME records in Cloudflare:
 petclinic-dev.praty.dev → ALB DNS name
 grafana-dev.praty.dev   → ALB DNS name
 etc.
+```
 
 ---
 
