@@ -1,0 +1,195 @@
+#!/bin/bash
+# Bootstrap Terraform remote state backend
+#
+# Creates:
+#   - S3 bucket: petclinic-terraform-state-{account-id}-{region}
+#   - DynamoDB table (optional): petclinic-terraform-locks
+#   - config/backend-dev.hcl   (gitignored — generated for YOUR account)
+#   - config/backend-prod.hcl  (gitignored — generated for YOUR account)
+#
+# Usage:
+#   ./scripts/bootstrap-state.sh                    # S3 native locking (default)
+#   ./scripts/bootstrap-state.sh --locking dynamodb # DynamoDB locking
+#   ./scripts/bootstrap-state.sh --region us-west-2
+#
+# Locking options:
+#   s3        — S3 native locking (use_lockfile=true, requires Terraform >= 1.10)
+#               Simpler, no extra AWS resource. Recommended for new setups.
+#   dynamodb  — DynamoDB locking (classic, works with Terraform >= 1.6)
+#               Use this if your Terraform version is between 1.6 and 1.9.
+#
+# NOTE: The generated config/ files are gitignored and account-specific.
+#       Every user who clones this repo must run this script once.
+#       The script is idempotent — safe to run multiple times.
+#
+# Prerequisites: aws cli configured with sufficient IAM permissions
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ── defaults ─────────────────────────────────────────────────────────────────
+REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
+LOCKING_MODE="s3"
+
+# ── argument parsing ──────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --region)  REGION="$2"; shift 2 ;;
+    --locking) LOCKING_MODE="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+if [[ "${LOCKING_MODE}" != "s3" && "${LOCKING_MODE}" != "dynamodb" ]]; then
+  echo "ERROR: --locking must be 's3' or 'dynamodb'"
+  exit 1
+fi
+
+# ── derive everything from account id + region ────────────────────────────────
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+BUCKET_NAME="petclinic-terraform-state-${ACCOUNT_ID}-${REGION}"
+TABLE_NAME="petclinic-terraform-locks"
+CONFIG_DIR="${REPO_ROOT}/config"
+
+echo "=================================================="
+echo " Terraform State Backend Bootstrap"
+echo "=================================================="
+echo " Region       : ${REGION}"
+echo " Account      : ${ACCOUNT_ID}"
+echo " Bucket       : ${BUCKET_NAME}"
+echo " Locking mode : ${LOCKING_MODE}"
+if [ "${LOCKING_MODE}" = "dynamodb" ]; then
+  echo " DynamoDB     : ${TABLE_NAME}"
+fi
+echo "=================================================="
+
+# ── S3 bucket ─────────────────────────────────────────────────────────────────
+if aws s3api head-bucket --bucket "${BUCKET_NAME}" 2>/dev/null; then
+  echo "[SKIP] S3 bucket already exists: ${BUCKET_NAME}"
+else
+  echo "[CREATE] S3 bucket: ${BUCKET_NAME}"
+  if [ "${REGION}" = "us-east-1" ]; then
+    aws s3api create-bucket \
+      --bucket "${BUCKET_NAME}" \
+      --region "${REGION}"
+  else
+    aws s3api create-bucket \
+      --bucket "${BUCKET_NAME}" \
+      --region "${REGION}" \
+      --create-bucket-configuration LocationConstraint="${REGION}"
+  fi
+fi
+
+echo "[SET] Versioning..."
+aws s3api put-bucket-versioning \
+  --bucket "${BUCKET_NAME}" \
+  --versioning-configuration Status=Enabled
+
+echo "[SET] Encryption..."
+aws s3api put-bucket-encryption \
+  --bucket "${BUCKET_NAME}" \
+  --server-side-encryption-configuration '{
+    "Rules": [{
+      "ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"},
+      "BucketKeyEnabled": true
+    }]
+  }'
+
+echo "[SET] Block public access..."
+aws s3api put-public-access-block \
+  --bucket "${BUCKET_NAME}" \
+  --public-access-block-configuration \
+  "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+# ── DynamoDB table (only when --locking dynamodb) ─────────────────────────────
+if [ "${LOCKING_MODE}" = "dynamodb" ]; then
+  if aws dynamodb describe-table \
+       --table-name "${TABLE_NAME}" \
+       --region "${REGION}" 2>/dev/null | grep -q "ACTIVE\|CREATING"; then
+    echo "[SKIP] DynamoDB table already exists: ${TABLE_NAME}"
+  else
+    echo "[CREATE] DynamoDB table: ${TABLE_NAME}"
+    aws dynamodb create-table \
+      --table-name "${TABLE_NAME}" \
+      --attribute-definitions AttributeName=LockID,AttributeType=S \
+      --key-schema AttributeName=LockID,KeyType=HASH \
+      --billing-mode PAY_PER_REQUEST \
+      --region "${REGION}" > /dev/null
+
+    echo "[WAIT] Waiting for table to become active..."
+    aws dynamodb wait table-exists \
+      --table-name "${TABLE_NAME}" \
+      --region "${REGION}"
+    echo "[OK] DynamoDB table ready: ${TABLE_NAME}"
+  fi
+fi
+
+# ── Generate backend config files (gitignored, account-specific) ──────────────
+echo "[GENERATE] Creating ${CONFIG_DIR}/backend-{dev,prod}.hcl ..."
+mkdir -p "${CONFIG_DIR}"
+
+if [ "${LOCKING_MODE}" = "dynamodb" ]; then
+  cat > "${CONFIG_DIR}/backend-dev.hcl" << EOF
+# Generated by scripts/bootstrap-state.sh — DO NOT COMMIT (gitignored)
+# Account: ${ACCOUNT_ID} | Region: ${REGION} | Locking: DynamoDB
+bucket         = "${BUCKET_NAME}"
+key            = "petclinic/dev/terraform.tfstate"
+region         = "${REGION}"
+dynamodb_table = "${TABLE_NAME}"
+encrypt        = true
+EOF
+
+  cat > "${CONFIG_DIR}/backend-prod.hcl" << EOF
+# Generated by scripts/bootstrap-state.sh — DO NOT COMMIT (gitignored)
+# Account: ${ACCOUNT_ID} | Region: ${REGION} | Locking: DynamoDB
+bucket         = "${BUCKET_NAME}"
+key            = "petclinic/prod/terraform.tfstate"
+region         = "${REGION}"
+dynamodb_table = "${TABLE_NAME}"
+encrypt        = true
+EOF
+
+else
+  cat > "${CONFIG_DIR}/backend-dev.hcl" << EOF
+# Generated by scripts/bootstrap-state.sh — DO NOT COMMIT (gitignored)
+# Account: ${ACCOUNT_ID} | Region: ${REGION} | Locking: S3 native (requires Terraform >= 1.10)
+bucket       = "${BUCKET_NAME}"
+key          = "petclinic/dev/terraform.tfstate"
+region       = "${REGION}"
+use_lockfile = true
+encrypt      = true
+EOF
+
+  cat > "${CONFIG_DIR}/backend-prod.hcl" << EOF
+# Generated by scripts/bootstrap-state.sh — DO NOT COMMIT (gitignored)
+# Account: ${ACCOUNT_ID} | Region: ${REGION} | Locking: S3 native (requires Terraform >= 1.10)
+bucket       = "${BUCKET_NAME}"
+key          = "petclinic/prod/terraform.tfstate"
+region       = "${REGION}"
+use_lockfile = true
+encrypt      = true
+EOF
+fi
+
+echo ""
+echo "✅ Bootstrap complete!"
+echo ""
+echo " These files are YOUR account-specific config (gitignored):"
+echo "   ${CONFIG_DIR}/backend-dev.hcl"
+echo "   ${CONFIG_DIR}/backend-prod.hcl"
+echo ""
+echo " Locking: ${LOCKING_MODE}"
+if [ "${LOCKING_MODE}" = "s3" ]; then
+  echo " Note: S3 native locking requires Terraform >= 1.10"
+  echo "       If you have Terraform < 1.10, re-run with: --locking dynamodb"
+fi
+echo ""
+echo " Next steps — use the tf.sh wrapper (handles all paths automatically):"
+echo ""
+echo "   ./scripts/tf.sh dev init"
+echo "   ./scripts/tf.sh prod init"
+echo ""
+echo "   ./scripts/tf.sh dev validate"
+echo "   ./scripts/tf.sh prod validate"
