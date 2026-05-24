@@ -1,0 +1,46 @@
+# NOTE: Host values and certificate ARN are updated automatically by:
+#   ./scripts/generate-config.sh dev
+# Do NOT manually edit hostnames or certificate-arn — they are injected
+# from terraform outputs after every terraform apply.
+#
+# CERT_ARN_PLACEHOLDER      → filled with ACM certificate ARN from terraform output
+# PLACEHOLDER_PETCLINIC_HOST → e.g. petclinic-dev.your-domain.com
+# PLACEHOLDER_ADMIN_HOST     → e.g. admin-dev.your-domain.com
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: petclinic-ingress
+  namespace: petclinic-dev
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/group.name: petclinic-app
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+spec:
+  ingressClassName: alb
+  rules:
+    - host: petclinic-dev.praty.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
+    - host: admin-dev.praty.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-server
+                port:
+                  number: 9090
